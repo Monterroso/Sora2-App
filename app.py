@@ -5,9 +5,11 @@ Sora 2 Video Generator - Flask Backend
 import os
 import base64
 import re
+import io
 from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
 from openai import OpenAI
+from PIL import Image
 
 import dotenv
 dotenv.load_dotenv()
@@ -48,6 +50,28 @@ def parse_data_url(data_url):
         return mime_type, bytes_data
     return None, None
 
+def resize_image_to_resolution(image_bytes, target_resolution):
+    """Resize image to match target resolution (e.g., '1280x720')"""
+    # Parse target dimensions
+    width, height = map(int, target_resolution.split('x'))
+    
+    # Open image from bytes
+    img = Image.open(io.BytesIO(image_bytes))
+    
+    # Convert to RGB if necessary (handles RGBA, P mode, etc.)
+    if img.mode in ('RGBA', 'P'):
+        img = img.convert('RGB')
+    
+    # Resize to exact dimensions (uses LANCZOS for high quality)
+    resized_img = img.resize((width, height), Image.LANCZOS)
+    
+    # Save to bytes buffer as JPEG (good balance of quality and size)
+    buffer = io.BytesIO()
+    resized_img.save(buffer, format='JPEG', quality=95)
+    buffer.seek(0)
+    
+    return buffer.read(), 'image/jpeg'
+
 @app.route('/api/generate', methods=['POST'])
 def generate_video():
     """Start video generation with Sora 2"""
@@ -79,12 +103,10 @@ def generate_video():
         if input_reference_data:
             mime_type, image_bytes = parse_data_url(input_reference_data)
             if image_bytes:
-                # Get file extension from mime type
-                ext = mime_type.split('/')[-1] if mime_type else 'png'
-                if ext == 'jpeg':
-                    ext = 'jpg'
+                # Resize image to match the requested output resolution
+                resized_bytes, resized_mime = resize_image_to_resolution(image_bytes, resolution)
                 # Format: tuple of (filename, file_content, content_type) - single file, not array
-                create_params["input_reference"] = (f"reference.{ext}", image_bytes, mime_type)
+                create_params["input_reference"] = ("reference.jpg", resized_bytes, resized_mime)
         
         video = openai_client.videos.create(**create_params)
         
