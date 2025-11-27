@@ -8,6 +8,7 @@ import re
 import io
 from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
+from flask_httpauth import HTTPBasicAuth
 from openai import OpenAI
 from PIL import Image
 
@@ -17,6 +18,17 @@ dotenv.load_dotenv()
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
+auth = HTTPBasicAuth()
+
+# Basic auth credentials from environment variables
+AUTH_USERNAME = os.environ.get('AUTH_USERNAME', 'admin')
+AUTH_PASSWORD = os.environ.get('AUTH_PASSWORD', 'password')
+
+@auth.verify_password
+def verify_password(username, password):
+    if username == AUTH_USERNAME and password == AUTH_PASSWORD:
+        return username
+    return None
 
 client = None
 
@@ -30,10 +42,12 @@ def get_client():
     return None
 
 @app.route('/')
+@auth.login_required
 def index():
     return send_from_directory('static', 'index.html')
 
 @app.route('/api/check-key', methods=['GET'])
+@auth.login_required
 def check_api_key():
     if get_client() is None:
         return jsonify({"configured": False})
@@ -73,6 +87,7 @@ def resize_image_to_resolution(image_bytes, target_resolution):
     return buffer.read(), 'image/jpeg'
 
 @app.route('/api/generate', methods=['POST'])
+@auth.login_required
 def generate_video():
     """Start video generation with Sora 2"""
     openai_client = get_client()
@@ -121,6 +136,7 @@ def generate_video():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/status/<video_id>', methods=['GET'])
+@auth.login_required
 def check_status(video_id):
     """Check video generation status"""
     openai_client = get_client()
@@ -138,6 +154,7 @@ def check_status(video_id):
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/download/<video_id>', methods=['GET'])
+@auth.login_required
 def download_video(video_id):
     """Download completed video content"""
     openai_client = get_client()
