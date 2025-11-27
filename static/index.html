@@ -472,13 +472,17 @@
         /* Video player */
         .video-container {
             width: 100%;
+            max-width: 640px;
             border-radius: 12px;
             overflow: hidden;
             background: black;
+            margin: 0 auto;
         }
 
         .video-container video {
             width: 100%;
+            max-height: 360px;
+            object-fit: contain;
             display: block;
         }
 
@@ -528,6 +532,7 @@
             overflow: hidden;
             text-overflow: ellipsis;
             margin-bottom: 0.25rem;
+            max-width: 250px;
         }
 
         .history-meta {
@@ -647,6 +652,85 @@
         footer a:hover {
             text-decoration: underline;
         }
+
+        /* Image upload area */
+        .image-upload-area {
+            position: relative;
+            border: 2px dashed var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: var(--bg-tertiary);
+            min-height: 120px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .image-upload-area:hover {
+            border-color: var(--accent-primary);
+            background: rgba(124, 58, 237, 0.05);
+        }
+
+        .image-upload-area.drag-over {
+            border-color: var(--accent-secondary);
+            background: rgba(124, 58, 237, 0.1);
+        }
+
+        .upload-placeholder {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .upload-icon {
+            font-size: 2rem;
+            opacity: 0.5;
+        }
+
+        .upload-text {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        .image-preview-container {
+            position: relative;
+            width: 100%;
+            max-width: 200px;
+        }
+
+        .image-preview-container img {
+            width: 100%;
+            height: auto;
+            border-radius: 8px;
+            object-fit: cover;
+            max-height: 150px;
+        }
+
+        .remove-image-btn {
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: var(--error);
+            border: none;
+            color: white;
+            font-size: 0.8rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s ease;
+        }
+
+        .remove-image-btn:hover {
+            transform: scale(1.1);
+        }
     </style>
 </head>
 <body>
@@ -704,28 +788,34 @@
                         <div class="form-group">
                             <label for="resolution">Resolution</label>
                             <select id="resolution">
-                                <option value="1920x1080">1080p (16:9)</option>
-                                <option value="1280x720">720p (16:9)</option>
-                                <option value="1080x1920">1080p (9:16)</option>
-                                <option value="1080x1080">1080p (1:1)</option>
+                                <option value="1280x720">1280×720 (Landscape)</option>
+                                <option value="720x1280">720×1280 (Portrait)</option>
                             </select>
                         </div>
 
-                        <div class="form-group">
-                            <label for="aspect">Aspect Ratio</label>
-                            <select id="aspect">
-                                <option value="16:9">Landscape (16:9)</option>
-                                <option value="9:16">Portrait (9:16)</option>
-                                <option value="1:1">Square (1:1)</option>
-                            </select>
-                        </div>
                     </div>
 
                     <div class="form-group">
                         <label for="duration">Duration</label>
-                        <div class="range-container">
-                            <input type="range" id="duration" min="5" max="20" value="10">
-                            <span class="range-value" id="duration-value">10s</span>
+                        <select id="duration">
+                            <option value="4">4 seconds</option>
+                            <option value="8" selected>8 seconds</option>
+                            <option value="12">12 seconds</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="reference-image">Reference Image (optional)</label>
+                        <div class="image-upload-area" id="image-upload-area">
+                            <input type="file" id="reference-image" accept="image/*" hidden>
+                            <div class="upload-placeholder" id="upload-placeholder">
+                                <span class="upload-icon">🖼️</span>
+                                <span class="upload-text">Click or drag image for image-to-video</span>
+                            </div>
+                            <div class="image-preview-container" id="image-preview-container" style="display: none;">
+                                <img id="image-preview" src="" alt="Reference preview">
+                                <button type="button" class="remove-image-btn" id="remove-image-btn">✕</button>
+                            </div>
                         </div>
                     </div>
 
@@ -789,9 +879,7 @@
         const promptInput = document.getElementById('prompt');
         const modelSelect = document.getElementById('model');
         const resolutionSelect = document.getElementById('resolution');
-        const aspectSelect = document.getElementById('aspect');
-        const durationSlider = document.getElementById('duration');
-        const durationValue = document.getElementById('duration-value');
+        const durationSelect = document.getElementById('duration');
         const generateBtn = document.getElementById('generate-btn');
         const previewArea = document.getElementById('preview-area');
         const statusContainer = document.getElementById('status-container');
@@ -800,25 +888,141 @@
         const progressBar = document.getElementById('progress-bar');
         const apiWarning = document.getElementById('api-warning');
         const historyContainer = document.getElementById('history-container');
+        const imageUploadArea = document.getElementById('image-upload-area');
+        const referenceImageInput = document.getElementById('reference-image');
+        const uploadPlaceholder = document.getElementById('upload-placeholder');
+        const imagePreviewContainer = document.getElementById('image-preview-container');
+        const imagePreview = document.getElementById('image-preview');
+        const removeImageBtn = document.getElementById('remove-image-btn');
 
         // State
         let currentJobId = null;
         let pollInterval = null;
         let generationHistory = JSON.parse(localStorage.getItem('soraHistory') || '[]');
+        let referenceImageData = null; // Stores the base64 image data
+
+        // Resolution options per model
+        const resolutionsByModel = {
+            'sora-2': [
+                { value: '1280x720', label: '1280×720 (Landscape) — $0.10/s' },
+                { value: '720x1280', label: '720×1280 (Portrait) — $0.10/s' }
+            ],
+            'sora-2-pro': [
+                { value: '1280x720', label: '1280×720 (Landscape) — $0.30/s' },
+                { value: '720x1280', label: '720×1280 (Portrait) — $0.30/s' },
+                { value: '1792x1024', label: '1792×1024 (Landscape) — $0.50/s' },
+                { value: '1024x1792', label: '1024×1792 (Portrait) — $0.50/s' }
+            ]
+        };
+
+        // Update resolution options based on selected model
+        function updateResolutionOptions() {
+            const model = modelSelect.value;
+            const options = resolutionsByModel[model] || resolutionsByModel['sora-2'];
+            const currentValue = resolutionSelect.value;
+            
+            // Clear existing options
+            resolutionSelect.innerHTML = '';
+            
+            // Add new options
+            options.forEach(opt => {
+                const option = document.createElement('option');
+                option.value = opt.value;
+                option.textContent = opt.label;
+                resolutionSelect.appendChild(option);
+            });
+            
+            // Try to preserve the selected value if it exists in new options
+            const valueExists = options.some(opt => opt.value === currentValue);
+            if (valueExists) {
+                resolutionSelect.value = currentValue;
+            }
+        }
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
             checkApiKey();
             renderHistory();
+            updateResolutionOptions();
             
-            // Duration slider
-            durationSlider.addEventListener('input', () => {
-                durationValue.textContent = `${durationSlider.value}s`;
-            });
-
+            // Model change handler
+            modelSelect.addEventListener('change', updateResolutionOptions);
+            
             // Form submission
             form.addEventListener('submit', handleSubmit);
+            
+            // Image upload handlers
+            setupImageUpload();
         });
+
+        // Setup image upload functionality
+        function setupImageUpload() {
+            // Click to upload
+            imageUploadArea.addEventListener('click', () => {
+                referenceImageInput.click();
+            });
+
+            // File input change
+            referenceImageInput.addEventListener('change', (e) => {
+                if (e.target.files && e.target.files[0]) {
+                    handleImageFile(e.target.files[0]);
+                }
+            });
+
+            // Drag and drop
+            imageUploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                imageUploadArea.classList.add('drag-over');
+            });
+
+            imageUploadArea.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                imageUploadArea.classList.remove('drag-over');
+            });
+
+            imageUploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                imageUploadArea.classList.remove('drag-over');
+                if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                    handleImageFile(e.dataTransfer.files[0]);
+                }
+            });
+
+            // Remove image button
+            removeImageBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                clearReferenceImage();
+            });
+        }
+
+        // Handle image file selection
+        function handleImageFile(file) {
+            if (!file.type.startsWith('image/')) {
+                alert('Please select a valid image file');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const base64Data = e.target.result;
+                referenceImageData = base64Data;
+                
+                // Show preview
+                imagePreview.src = base64Data;
+                uploadPlaceholder.style.display = 'none';
+                imagePreviewContainer.style.display = 'block';
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // Clear reference image
+        function clearReferenceImage() {
+            referenceImageData = null;
+            referenceImageInput.value = '';
+            imagePreview.src = '';
+            uploadPlaceholder.style.display = 'flex';
+            imagePreviewContainer.style.display = 'none';
+        }
 
         // Check if API key is configured
         async function checkApiKey() {
@@ -857,14 +1061,25 @@
             `;
 
             try {
+                // Build request body
+                const requestBody = {
+                    prompt: prompt,
+                    model: modelSelect.value,
+                    resolution: resolutionSelect.value,
+                    duration: parseInt(durationSelect.value)
+                };
+
+                // Add reference image if provided (send as base64 data URL string)
+                if (referenceImageData) {
+                    requestBody.input_reference = referenceImageData;
+                }
+
                 const response = await fetch('/api/generate', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        prompt: prompt
-                    })
+                    body: JSON.stringify(requestBody)
                 });
 
                 const data = await response.json();

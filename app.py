@@ -3,6 +3,8 @@ Sora 2 Video Generator - Flask Backend
 """
 
 import os
+import base64
+import re
 from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
 from openai import OpenAI
@@ -35,6 +37,17 @@ def check_api_key():
         return jsonify({"configured": False})
     return jsonify({"configured": True})
 
+def parse_data_url(data_url):
+    """Parse a data URL and return (mime_type, bytes_data)"""
+    # Format: data:image/png;base64,iVBORw0KGgo...
+    match = re.match(r'data:([^;]+);base64,(.+)', data_url)
+    if match:
+        mime_type = match.group(1)
+        base64_data = match.group(2)
+        bytes_data = base64.b64decode(base64_data)
+        return mime_type, bytes_data
+    return None, None
+
 @app.route('/api/generate', methods=['POST'])
 def generate_video():
     """Start video generation with Sora 2"""
@@ -44,15 +57,36 @@ def generate_video():
     
     data = request.json
     prompt = data.get('prompt', '')
+    model = data.get('model', 'sora-2')
+    resolution = data.get('resolution', '1920x1080')
+    duration = data.get('duration', "5")
+    input_reference_data = data.get('input_reference')  # Optional reference image (base64 data URL)
     
     if not prompt:
         return jsonify({"error": "Prompt is required"}), 400
     
     try:
-        video = openai_client.videos.create(
-            model="sora-2",
-            prompt=prompt,
-        )
+        # Build the video create parameters
+        create_params = {
+            "model": model,
+            "prompt": prompt,
+            "size": resolution,
+            "seconds": str(duration),
+        }
+        
+        # Add input_reference if provided (for image-to-video generation)
+        # Convert base64 data URL to bytes tuple format required by OpenAI
+        if input_reference_data:
+            mime_type, image_bytes = parse_data_url(input_reference_data)
+            if image_bytes:
+                # Get file extension from mime type
+                ext = mime_type.split('/')[-1] if mime_type else 'png'
+                if ext == 'jpeg':
+                    ext = 'jpg'
+                # Format: tuple of (filename, file_content, content_type) - single file, not array
+                create_params["input_reference"] = (f"reference.{ext}", image_bytes, mime_type)
+        
+        video = openai_client.videos.create(**create_params)
         
         return jsonify({
             "success": True,
